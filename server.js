@@ -1,29 +1,19 @@
 const express = require('express');
-const { promises: fs } = require('fs');
-const path = require('path');
 const { v4: uuidv4 } = require('uuid');
-
-const app = express();
-app.use(express.json());
-
-const DB_PATH = path.join(__dirname, 'student.json');
-
-async function readStudents() {
-    const raw = await fs.readFile(DB_PATH, 'utf8');
-    return JSON.parse(raw || '[]');
-}
+const pool = require('./database');
 
 // Route: GET all students
-app.get('/students', async (req, res) => {
+const getdata = async (req, res) => {
     try {
-        const students = await readStudents();
+        const [students] = await pool.query('select * from students');
         res.json(students);
     } catch (err) {
+        console.error(err);
         res.status(500).json({ success: false, message: 'Internal Server Error' });
     }
-});
+};
 
-app.post('/students', async (req, res) => {
+const insertdata = (async (req, res) => {
     try {
         const { name, age, class: studentClass } = req.body;
         if (!name || name.length < 3) {
@@ -36,72 +26,42 @@ app.post('/students', async (req, res) => {
             return res.status(400).json({ success: false, message: "Class is required" });
         }
 
-        const students = await readStudents();
+        const id = uuidv4();
 
-        const newStudent = {
-            id: uuidv4(),
-            name: name,
-            age: age,
-            class: studentClass
-        };
-
-        students.push(newStudent);
-        await fs.writeFile(DB_PATH, JSON.stringify(students, null, 2));
-
-        res.status(201).json({ success: true, student: newStudent });
+        await pool.query("insert into students(id,name,age,class)values(?,?,?,?)", [id, name, age, studentClass]);
+        const student = { name, age, class: studentClass };
+        res.status(201).json({ success: true, student });
 
     } catch (err) {
         res.status(500).json({ success: false, message: "Server error" });
     }
 });
 
-
-app.put('/students/:id', async (req, res) => {
+const update = async (req, res) => {
     try {
-        const { id } = req.params;                  
+        const { id } = req.params;
         const { name, age, class: studentClass } = req.body;
 
-        if (!name || name.length < 3)
-            return res.status(400).json({ success: false, message: "Name must be at least 3 characters" });
+        const [result] = await pool.query("update students set name=?,age=?,class=? where id=?", [name, age, studentClass, id]);
 
-        if (!age || age <= 0)
-            return res.status(400).json({ success: false, message: "Age must be greater than 0" });
-
-        if (!studentClass)
-            return res.status(400).json({ success: false, message: "Class is required" });
-
-        const students = JSON.parse(await fs.readFile(DB_PATH, 'utf8') || '[]');
-
-        const student = students.find(s => s.id === id);
-        if (!student)
+        if (result.affectedRows === 0) {
             return res.status(404).json({ success: false, message: "Student not found" });
-
-        student.name = name;
-        student.age = age;
-        student.class = studentClass;
-
-        await fs.writeFile(DB_PATH, JSON.stringify(students, null, 2));
-
-        res.json({ success: true, student });
+        }
+        res.json({ sucess: true, student: { id, name, age, class: studentClass } });
     } catch (err) {
         res.status(500).json({ success: false, message: "Server error" });
     }
-});
+};
 
 
-app.delete('/students/:id', async (req, res) => {
+const deletedata = (async (req, res) => {
     try {
-        const { id } = req.params; 
+        const { id } = req.params;
 
-        const students = JSON.parse(await fs.readFile(DB_PATH, 'utf8') || '[]');
+        const [result] = await pool.query("delete from students where id=?", [id]);
 
-        const index = students.findIndex(s => s.id === id);
-        if (index === -1) {
+        if (result.affectedRows === 0)
             return res.status(404).json({ success: false, message: "Student not found" });
-        }
-
-        students.splice(index, 1);
-        await fs.writeFile(DB_PATH, JSON.stringify(students, null, 2));
 
         res.json({ success: true, message: "Student deleted successfully" });
     } catch (err) {
@@ -110,5 +70,4 @@ app.delete('/students/:id', async (req, res) => {
 });
 
 
-app.listen(3000, () =>
-    console.log("Server running on port 3000"));
+module.exports = { getdata, insertdata, update, deletedata };
